@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Expense & Envelope Manager (Sheets Auto Init)</title>
+  <title>Expense & Envelope Manager (Auto-Sync)</title>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="https://apis.google.com/js/api.js"></script>
   <style>
@@ -29,6 +29,7 @@
     <div class="summary">
       <h2>Dashboard Summary</h2>
       <div id="summary"></div>
+      <div id="lastSync">Last sync: never</div>
     </div>
 
     <div class="container">
@@ -90,6 +91,7 @@
     let gapiInited = false;
     let data = { accounts: [], envelopes: [], transactions: [] };
     let editIndex = null;
+    let editing = false;
 
     // --- Auth ---
     document.getElementById("signin").onclick = () => tokenClient.requestAccessToken();
@@ -130,8 +132,9 @@
       };
 
       // Add transaction
-      document.getElementById("transactionForm").onsubmit = (e) => {
+      document.getElementById("transactionForm").onsubmit = async (e) => {
         e.preventDefault();
+        editing = true;
         const t = {
           date: document.getElementById("date").value,
           account: document.getElementById("account").value,
@@ -146,7 +149,9 @@
           data.transactions.push(t);
         }
         e.target.reset();
-        saveData(); render();
+        await saveData();
+        editing = false;
+        render();
       };
     };
 
@@ -166,88 +171,51 @@
       const existing = sheetMeta.result.sheets.map(s => s.properties.title);
       const requests = [];
 
-      if (!existing.includes("Accounts")) {
-        requests.push({
-          addSheet: { properties: { title: "Accounts" } }
-        });
-      }
-      if (!existing.includes("Envelopes")) {
-        requests.push({
-          addSheet: { properties: { title: "Envelopes" } }
-        });
-      }
-      if (!existing.includes("Transactions")) {
-        requests.push({
-          addSheet: { properties: { title: "Transactions" } }
-        });
-      }
+      if (!existing.includes("Accounts")) requests.push({ addSheet: { properties: { title: "Accounts" } } });
+      if (!existing.includes("Envelopes")) requests.push({ addSheet: { properties: { title: "Envelopes" } } });
+      if (!existing.includes("Transactions")) requests.push({ addSheet: { properties: { title: "Transactions" } } });
 
       if (requests.length) {
-        await gapi.client.sheets.spreadsheets.batchUpdate({
-          spreadsheetId: SPREADSHEET_ID,
-          resource: { requests }
-        });
+        await gapi.client.sheets.spreadsheets.batchUpdate({ spreadsheetId: SPREADSHEET_ID, resource: { requests } });
       }
 
-      // Write headers
       await gapi.client.sheets.spreadsheets.values.update({
-        spreadsheetId: SPREADSHEET_ID,
-        range: "Accounts!A1",
-        valueInputOption: "RAW",
-        resource: { values: [["Name"]] }
+        spreadsheetId: SPREADSHEET_ID, range: "Accounts!A1",
+        valueInputOption: "RAW", resource: { values: [["Name"]] }
       });
       await gapi.client.sheets.spreadsheets.values.update({
-        spreadsheetId: SPREADSHEET_ID,
-        range: "Envelopes!A1:B1",
-        valueInputOption: "RAW",
-        resource: { values: [["Name", "Budget"]] }
+        spreadsheetId: SPREADSHEET_ID, range: "Envelopes!A1:B1",
+        valueInputOption: "RAW", resource: { values: [["Name", "Budget"]] }
       });
       await gapi.client.sheets.spreadsheets.values.update({
-        spreadsheetId: SPREADSHEET_ID,
-        range: "Transactions!A1:E1",
-        valueInputOption: "RAW",
-        resource: { values: [["Date", "Account", "Envelope", "Type", "Amount"]] }
+        spreadsheetId: SPREADSHEET_ID, range: "Transactions!A1:E1",
+        valueInputOption: "RAW", resource: { values: [["Date","Account","Envelope","Type","Amount"]] }
       });
     }
 
     // --- Save Data ---
     async function saveData() {
-      await gapi.client.sheets.spreadsheets.values.clear({
-        spreadsheetId: SPREADSHEET_ID,
-        range: "Accounts!A2:A"
-      });
+      await gapi.client.sheets.spreadsheets.values.clear({ spreadsheetId: SPREADSHEET_ID, range: "Accounts!A2:A" });
       if (data.accounts.length) {
         await gapi.client.sheets.spreadsheets.values.update({
-          spreadsheetId: SPREADSHEET_ID,
-          range: "Accounts!A2",
-          valueInputOption: "RAW",
-          resource: { values: data.accounts.map(a => [a.name]) }
+          spreadsheetId: SPREADSHEET_ID, range: "Accounts!A2",
+          valueInputOption: "RAW", resource: { values: data.accounts.map(a => [a.name]) }
         });
       }
 
-      await gapi.client.sheets.spreadsheets.values.clear({
-        spreadsheetId: SPREADSHEET_ID,
-        range: "Envelopes!A2:B"
-      });
+      await gapi.client.sheets.spreadsheets.values.clear({ spreadsheetId: SPREADSHEET_ID, range: "Envelopes!A2:B" });
       if (data.envelopes.length) {
         await gapi.client.sheets.spreadsheets.values.update({
-          spreadsheetId: SPREADSHEET_ID,
-          range: "Envelopes!A2",
-          valueInputOption: "RAW",
-          resource: { values: data.envelopes.map(e => [e.name, e.budget]) }
+          spreadsheetId: SPREADSHEET_ID, range: "Envelopes!A2",
+          valueInputOption: "RAW", resource: { values: data.envelopes.map(e => [e.name, e.budget]) }
         });
       }
 
-      await gapi.client.sheets.spreadsheets.values.clear({
-        spreadsheetId: SPREADSHEET_ID,
-        range: "Transactions!A2:E"
-      });
+      await gapi.client.sheets.spreadsheets.values.clear({ spreadsheetId: SPREADSHEET_ID, range: "Transactions!A2:E" });
       if (data.transactions.length) {
         await gapi.client.sheets.spreadsheets.values.update({
-          spreadsheetId: SPREADSHEET_ID,
-          range: "Transactions!A2",
-          valueInputOption: "RAW",
-          resource: { values: data.transactions.map(t => [t.date, t.account, t.envelope, t.type, t.amount]) }
+          spreadsheetId: SPREADSHEET_ID, range: "Transactions!A2",
+          valueInputOption: "RAW", resource: { values: data.transactions.map(t => [t.date, t.account, t.envelope, t.type, t.amount]) }
         });
       }
     }
@@ -255,34 +223,23 @@
     // --- Load Data ---
     async function loadData() {
       try {
-        const accRes = await gapi.client.sheets.spreadsheets.values.get({
-          spreadsheetId: SPREADSHEET_ID,
-          range: "Accounts!A2:A"
-        });
+        const accRes = await gapi.client.sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: "Accounts!A2:A" });
         data.accounts = (accRes.result.values || []).map(r => ({ name: r[0] }));
 
-        const envRes = await gapi.client.sheets.spreadsheets.values.get({
-          spreadsheetId: SPREADSHEET_ID,
-          range: "Envelopes!A2:B"
-        });
+        const envRes = await gapi.client.sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: "Envelopes!A2:B" });
         data.envelopes = (envRes.result.values || []).map(r => ({ name: r[0], budget: parseFloat(r[1] || 0) }));
 
-        const txRes = await gapi.client.sheets.spreadsheets.values.get({
-          spreadsheetId: SPREADSHEET_ID,
-          range: "Transactions!A2:E"
-        });
+        const txRes = await gapi.client.sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: "Transactions!A2:E" });
         data.transactions = (txRes.result.values || []).map(r => ({
           date: r[0], account: r[1], envelope: r[2], type: r[3], amount: parseFloat(r[4] || 0)
         }));
-      } catch (e) {
-        console.warn("Error loading data:", e);
-      }
+      } catch (e) { console.warn("Error loading data:", e); }
       render();
+      updateLastSync();
     }
 
     // --- Render ---
     function render() {
-      // accounts
       const accSel = document.getElementById("account");
       accSel.innerHTML = data.accounts.map(a => `<option>${a.name}</option>`).join("");
       const accTable = document.getElementById("accountTable");
@@ -293,7 +250,6 @@
       });
       accTable.innerHTML = accountBalances.map(a => `<tr><td>${a.name}</td><td>$${a.balance.toFixed(2)}</td></tr>`).join("");
 
-      // envelopes
       const envSel = document.getElementById("envelope");
       envSel.innerHTML = data.envelopes.map(e => `<option>${e.name}</option>`).join("");
       const envTable = document.getElementById("envelopeTable");
@@ -304,7 +260,6 @@
       });
       envTable.innerHTML = envelopeBalances.map(e => `<tr><td>${e.name}</td><td>$${e.budget.toFixed(2)}</td><td>$${e.balance.toFixed(2)}</td></tr>`).join("");
 
-      // transactions
       const tbody = document.getElementById("transactions");
       tbody.innerHTML = data.transactions.map((t,i) => `
         <tr>
@@ -319,7 +274,6 @@
           </td>
         </tr>`).join("");
 
-      // summary
       const totalIncome = data.transactions.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0);
       const totalExpenses = data.transactions.filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0);
       const net = totalIncome - totalExpenses;
@@ -335,7 +289,11 @@
       `;
     }
 
-    // --- Expose helpers ---
+    function updateLastSync() {
+      const now = new Date();
+      document.getElementById("lastSync").innerText = `Last sync: ${now.toLocaleTimeString()}`;
+    }
+
     window.editTx = (i) => {
       const t = data.transactions[i];
       document.getElementById("date").value = t.date;
@@ -344,14 +302,19 @@
       document.getElementById("type").value = t.type;
       document.getElementById("amount").value = t.amount;
       editIndex = i;
+      editing = true;
     };
 
-    window.delTx = (i) => {
+    window.delTx = async (i) => {
       if (confirm("Delete this transaction?")) {
         data.transactions.splice(i,1);
-        saveData(); render();
+        await saveData();
+        render();
       }
     };
+
+    // --- Auto-refresh every 5 seconds ---
+    setInterval(async () => { if (!editing && gapiInited) await loadData(); }, 5000);
   </script>
 </body>
 </html>
