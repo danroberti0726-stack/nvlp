@@ -29,9 +29,9 @@
   <table id="envelopes"><tr><th>Name</th><th>Allocated</th><th>Spent</th></tr></table>
 
 <script>
-const CLIENT_ID = "328349480906-e0304dl7h3to0lgg1d27ioce7k61cruv.apps.googleusercontent.com";
-const API_KEY = "AIzaSyAc_bOBF-mbWlGKacbaK7OIFXBsQObUfLw"; 
-const SPREADSHEET_ID = "1gYT7OOr0aRbq0iwVVjDfmXHJ1ARpnxX04NT8-b-pUqE"; 
+const CLIENT_ID = "YOUR_CLIENT_ID.apps.googleusercontent.com"; 
+const API_KEY = "YOUR_API_KEY";
+const SPREADSHEET_ID = "YOUR_SPREADSHEET_ID";
 const DISCOVERY_DOCS = ["https://sheets.googleapis.com/$discovery/rest?version=v4"];
 const SCOPES = "https://www.googleapis.com/auth/spreadsheets";
 
@@ -133,6 +133,7 @@ document.getElementById("addAccount").onclick = () => {
   data.accounts.push({ name, start:startBal });
   saveData(); render();
 };
+
 window.editAccount = (i) => {
   const acc = data.accounts[i];
   const action = prompt(
@@ -189,4 +190,3 @@ document.getElementById("addEnvelope").onclick = () => {
 <script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
 </body>
 </html>
-
