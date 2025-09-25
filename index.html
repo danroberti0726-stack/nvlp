@@ -135,10 +135,27 @@ document.getElementById("addAccount").onclick = () => {
 };
 window.editAccount = (i) => {
   const acc = data.accounts[i];
-  const newName = prompt("Edit account name:", acc.name) || acc.name;
-  const newStart = parseFloat(prompt("Edit starting balance:", acc.start)) || acc.start;
-  data.accounts[i] = { name:newName, start:newStart };
-  saveData(); render();
+  const action = prompt(
+    `Editing account: ${acc.name}\nChoose an option:\n1 = Rename\n2 = Edit Starting Balance\n3 = Delete`,
+    "1"
+  );
+
+  if (action === "1") {
+    const newName = prompt("Enter new account name:", acc.name);
+    if (newName) data.accounts[i].name = newName;
+  } else if (action === "2") {
+    const newStart = parseFloat(prompt("Enter new starting balance:", acc.start));
+    if (!isNaN(newStart)) data.accounts[i].start = newStart;
+  } else if (action === "3") {
+    if (confirm(`Are you sure you want to delete account "${acc.name}"?`)) {
+      // also delete related transactions
+      data.transactions = data.transactions.filter(t => t.account !== acc.name);
+      data.accounts.splice(i, 1);
+    }
+  }
+
+  saveData();
+  render();
 };
 
 document.getElementById("addTransaction").onclick = () => {
@@ -172,3 +189,4 @@ document.getElementById("addEnvelope").onclick = () => {
 <script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
 </body>
 </html>
+
