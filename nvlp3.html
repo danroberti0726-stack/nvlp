@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Expense & Envelope Manager (Sheets Auto Init)</title>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://apis.google.com/js/api.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    h1 { margin-bottom: 10px; }
+    .hidden { display: none; }
+    .container { margin-bottom: 20px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+    th { background: #f0f0f0; }
+    button { margin: 2px; }
+    .summary { background: #f9f9f9; padding: 10px; border: 1px solid #ccc; margin-bottom: 20px; }
+    .summary h2 { margin-top: 0; }
+    .summary div { margin: 5px 0; }
+  </style>
+</head>
+<body>
+  <h1>Expense & Envelope Manager</h1>
+  <p id="status">Not signed in</p>
+  <button id="signin">Sign in with Google</button>
+  <button id="signout" style="display:none;">Sign out</button>
+
+  <div id="app" class="hidden">
+    <div class="summary">
+      <h2>Dashboard Summary</h2>
+      <div id="summary"></div>
+    </div>
+
+    <div class="container">
+      <h2>Accounts</h2>
+      <button id="addAccount">Add Account</button>
+      <table>
+        <thead>
+          <tr><th>Account</th><th>Balance</th></tr>
+        </thead>
+        <tbody id="accountTable"></tbody>
+      </table>
+    </div>
+
+    <div class="container">
+      <h2>Envelopes</h2>
+      <button id="addEnvelope">Add Envelope with Budget</button>
+      <table>
+        <thead>
+          <tr><th>Envelope</th><th>Budget</th><th>Balance</th></tr>
+        </thead>
+        <tbody id="envelopeTable"></tbody>
+      </table>
+    </div>
+
+    <div class="container">
+      <h2>Add Transaction</h2>
+      <form id="transactionForm">
+        <input type="date" id="date" required>
+        <select id="account" required></select>
+        <select id="envelope" required></select>
+        <select id="type">
+          <option value="expense">Expense</option>
+          <option value="income">Income</option>
+        </select>
+        <input type="number" step="0.01" id="amount" placeholder="Amount" required>
+        <button type="submit">Save</button>
+      </form>
+    </div>
+
+    <div class="container">
+      <h2>Transactions</h2>
+      <table>
+        <thead>
+          <tr><th>Date</th><th>Account</th><th>Envelope</th><th>Type</th><th>Amount</th><th>Actions</th></tr>
+        </thead>
+        <tbody id="transactions"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    // 🔧 Replace with your Google API info
+    const CLIENT_ID = "328349480906-gou07boduv79jl17bl4e0hs97dvjtfdr.apps.googleusercontent.com";
+    const API_KEY = "AIzaSyAc_bOBF-mbWlGKacbaK7OIFXBsQObUfLw"; 
+    const SPREADSHEET_ID = "1gYT7OOr0aRbq0iwVVjDfmXHJ1ARpnxX04NT8-b-pUqE"; 
+    const SCOPES = "https://www.googleapis.com/auth/spreadsheets";
+
+    let tokenClient;
+    let gapiInited = false;
+    let data = { accounts: [], envelopes: [], transactions: [] };
+    let editIndex = null;
+
+    // --- Auth ---
+    document.getElementById("signin").onclick = () => tokenClient.requestAccessToken();
+    document.getElementById("signout").onclick = handleSignout;
+
+    gapi.load("client", async () => {
+      await gapi.client.init({ apiKey: API_KEY });
+      await gapi.client.load("sheets", "v4");
+      gapiInited = true;
+    });
+
+    window.onload = () => {
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID,
+        scope: SCOPES,
+        callback: async (resp) => {
+          if (resp.error) throw resp;
+          document.getElementById("signin").style.display = "none";
+          document.getElementById("signout").style.display = "inline";
+          document.getElementById("status").innerText = "Signed in";
+          document.getElementById("app").classList.remove("hidden");
+          await initSheet();
+          await loadData();
+        },
+      });
+
+      // Add account
+      document.getElementById("addAccount").onclick = () => {
+        const name = prompt("Account name:");
+        if (name) { data.accounts.push({ name }); saveData(); render(); }
+      };
+
+      // Add envelope
+      document.getElementById("addEnvelope").onclick = () => {
+        const name = prompt("Envelope name:");
+        const budget = parseFloat(prompt("Budget:", "0")) || 0;
+        if (name) { data.envelopes.push({ name, budget }); saveData(); render(); }
+      };
+
+      // Add transaction
+      document.getElementById("transactionForm").onsubmit = (e) => {
+        e.preventDefault();
+        const t = {
+          date: document.getElementById("date").value,
+          account: document.getElementById("account").value,
+          envelope: document.getElementById("envelope").value,
+          type: document.getElementById("type").value,
+          amount: parseFloat(document.getElementById("amount").value)
+        };
+        if (editIndex !== null) {
+          data.transactions[editIndex] = t;
+          editIndex = null;
+        } else {
+          data.transactions.push(t);
+        }
+        e.target.reset();
+        saveData(); render();
+      };
+    };
+
+    async function handleSignout() {
+      await google.accounts.oauth2.revoke(tokenClient.credentials?.access_token || "", () => {});
+      document.getElementById("signin").style.display = "inline";
+      document.getElementById("signout").style.display = "none";
+      document.getElementById("status").innerText = "Not signed in";
+      document.getElementById("app").classList.add("hidden");
+    }
+
+    // --- Ensure Tabs Exist ---
+    async function initSheet() {
+      const sheetMeta = await gapi.client.sheets.spreadsheets.get({
+        spreadsheetId: SPREADSHEET_ID
+      });
+      const existing = sheetMeta.result.sheets.map(s => s.properties.title);
+      const requests = [];
+
+      if (!existing.includes("Accounts")) {
+        requests.push({
+          addSheet: { properties: { title: "Accounts" } }
+        });
+      }
+      if (!existing.includes("Envelopes")) {
+        requests.push({
+          addSheet: { properties: { title: "Envelopes" } }
+        });
+      }
+      if (!existing.includes("Transactions")) {
+        requests.push({
+          addSheet: { properties: { title: "Transactions" } }
+        });
+      }
+
+      if (requests.length) {
+        await gapi.client.sheets.spreadsheets.batchUpdate({
+          spreadsheetId: SPREADSHEET_ID,
+          resource: { requests }
+        });
+      }
+
+      // Write headers
+      await gapi.client.sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_ID,
+        range: "Accounts!A1",
+        valueInputOption: "RAW",
+        resource: { values: [["Name"]] }
+      });
+      await gapi.client.sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_ID,
+        range: "Envelopes!A1:B1",
+        valueInputOption: "RAW",
+        resource: { values: [["Name", "Budget"]] }
+      });
+      await gapi.client.sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_ID,
+        range: "Transactions!A1:E1",
+        valueInputOption: "RAW",
+        resource: { values: [["Date", "Account", "Envelope", "Type", "Amount"]] }
+      });
+    }
+
+    // --- Save Data ---
+    async function saveData() {
+      await gapi.client.sheets.spreadsheets.values.clear({
+        spreadsheetId: SPREADSHEET_ID,
+        range: "Accounts!A2:A"
+      });
+      if (data.accounts.length) {
+        await gapi.client.sheets.spreadsheets.values.update({
+          spreadsheetId: SPREADSHEET_ID,
+          range: "Accounts!A2",
+          valueInputOption: "RAW",
+          resource: { values: data.accounts.map(a => [a.name]) }
+        });
+      }
+
+      await gapi.client.sheets.spreadsheets.values.clear({
+        spreadsheetId: SPREADSHEET_ID,
+        range: "Envelopes!A2:B"
+      });
+      if (data.envelopes.length) {
+        await gapi.client.sheets.spreadsheets.values.update({
+          spreadsheetId: SPREADSHEET_ID,
+          range: "Envelopes!A2",
+          valueInputOption: "RAW",
+          resource: { values: data.envelopes.map(e => [e.name, e.budget]) }
+        });
+      }
+
+      await gapi.client.sheets.spreadsheets.values.clear({
+        spreadsheetId: SPREADSHEET_ID,
+        range: "Transactions!A2:E"
+      });
+      if (data.transactions.length) {
+        await gapi.client.sheets.spreadsheets.values.update({
+          spreadsheetId: SPREADSHEET_ID,
+          range: "Transactions!A2",
+          valueInputOption: "RAW",
+          resource: { values: data.transactions.map(t => [t.date, t.account, t.envelope, t.type, t.amount]) }
+        });
+      }
+    }
+
+    // --- Load Data ---
+    async function loadData() {
+      try {
+        const accRes = await gapi.client.sheets.spreadsheets.values.get({
+          spreadsheetId: SPREADSHEET_ID,
+          range: "Accounts!A2:A"
+        });
+        data.accounts = (accRes.result.values || []).map(r => ({ name: r[0] }));
+
+        const envRes = await gapi.client.sheets.spreadsheets.values.get({
+          spreadsheetId: SPREADSHEET_ID,
+          range: "Envelopes!A2:B"
+        });
+        data.envelopes = (envRes.result.values || []).map(r => ({ name: r[0], budget: parseFloat(r[1] || 0) }));
+
+        const txRes = await gapi.client.sheets.spreadsheets.values.get({
+          spreadsheetId: SPREADSHEET_ID,
+          range: "Transactions!A2:E"
+        });
+        data.transactions = (txRes.result.values || []).map(r => ({
+          date: r[0], account: r[1], envelope: r[2], type: r[3], amount: parseFloat(r[4] || 0)
+        }));
+      } catch (e) {
+        console.warn("Error loading data:", e);
+      }
+      render();
+    }
+
+    // --- Render ---
+    function render() {
+      // accounts
+      const accSel = document.getElementById("account");
+      accSel.innerHTML = data.accounts.map(a => `<option>${a.name}</option>`).join("");
+      const accTable = document.getElementById("accountTable");
+      const accountBalances = data.accounts.map(a => {
+        const spent = data.transactions.filter(t => t.account === a.name && t.type === "expense").reduce((s,t)=>s+t.amount,0);
+        const income = data.transactions.filter(t => t.account === a.name && t.type === "income").reduce((s,t)=>s+t.amount,0);
+        return { name:a.name, balance:income - spent };
+      });
+      accTable.innerHTML = accountBalances.map(a => `<tr><td>${a.name}</td><td>$${a.balance.toFixed(2)}</td></tr>`).join("");
+
+      // envelopes
+      const envSel = document.getElementById("envelope");
+      envSel.innerHTML = data.envelopes.map(e => `<option>${e.name}</option>`).join("");
+      const envTable = document.getElementById("envelopeTable");
+      const envelopeBalances = data.envelopes.map(e => {
+        const spent = data.transactions.filter(t => t.envelope === e.name && t.type === "expense").reduce((s,t)=>s+t.amount,0);
+        const income = data.transactions.filter(t => t.envelope === e.name && t.type === "income").reduce((s,t)=>s+t.amount,0);
+        return { ...e, balance: e.budget + income - spent };
+      });
+      envTable.innerHTML = envelopeBalances.map(e => `<tr><td>${e.name}</td><td>$${e.budget.toFixed(2)}</td><td>$${e.balance.toFixed(2)}</td></tr>`).join("");
+
+      // transactions
+      const tbody = document.getElementById("transactions");
+      tbody.innerHTML = data.transactions.map((t,i) => `
+        <tr>
+          <td>${t.date}</td>
+          <td>${t.account}</td>
+          <td>${t.envelope}</td>
+          <td>${t.type}</td>
+          <td>$${t.amount.toFixed(2)}</td>
+          <td>
+            <button onclick="editTx(${i})">Edit</button>
+            <button onclick="delTx(${i})">Delete</button>
+          </td>
+        </tr>`).join("");
+
+      // summary
+      const totalIncome = data.transactions.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0);
+      const totalExpenses = data.transactions.filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0);
+      const net = totalIncome - totalExpenses;
+      const totalAccBalances = accountBalances.reduce((s,a)=>s+a.balance,0);
+      const totalEnvBalances = envelopeBalances.reduce((s,e)=>s+e.balance,0);
+
+      document.getElementById("summary").innerHTML = `
+        <div><strong>Total Income:</strong> $${totalIncome.toFixed(2)}</div>
+        <div><strong>Total Expenses:</strong> $${totalExpenses.toFixed(2)}</div>
+        <div><strong>Net:</strong> $${net.toFixed(2)}</div>
+        <div><strong>Total Account Balances:</strong> $${totalAccBalances.toFixed(2)}</div>
+        <div><strong>Total Envelope Balances:</strong> $${totalEnvBalances.toFixed(2)}</div>
+      `;
+    }
+
+    // --- Expose helpers ---
+    window.editTx = (i) => {
+      const t = data.transactions[i];
+      document.getElementById("date").value = t.date;
+      document.getElementById("account").value = t.account;
+      document.getElementById("envelope").value = t.envelope;
+      document.getElementById("type").value = t.type;
+      document.getElementById("amount").value = t.amount;
+      editIndex = i;
+    };
+
+    window.delTx = (i) => {
+      if (confirm("Delete this transaction?")) {
+        data.transactions.splice(i,1);
+        saveData(); render();
+      }
+    };
+  </script>
+</body>
+</html>
